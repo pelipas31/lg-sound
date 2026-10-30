@@ -1,4 +1,14 @@
 "Ищу монитор…" = "Looking for your monitor…";
+"Открыть окно управления" = "Open controls window";
+"Громкость" = "Volume";
+"Громкость: %d%%" = "Volume: %d%%";
+"Яркость дисплея" = "Display brightness";
+"Яркость: %d%%" = "Brightness: %d%%";
+"Яркость недоступна" = "Brightness unavailable";
+"Нет связи с монитором." = "Monitor disconnected.";
+"Монитор не сообщает яркость по DDC/CI. Проверь режим HDR и настройки монитора." = "The monitor does not report DDC/CI brightness. Check HDR and monitor settings.";
+"Монитор ограничил яркость. Проверь HDR и режим изображения." = "The monitor limited brightness. Check HDR and picture mode.";
+"Не удалось изменить яркость. Нажми «Обновить подключение»." = "Could not change brightness. Choose Reconnect monitor.";
 "Открыть окно громкости" = "Open volume window";
 "Mute" = "Mute";
 "Выключить / вернуть звук" = "Mute / Unmute";

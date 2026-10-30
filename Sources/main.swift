@@ -7,6 +7,15 @@ func L(_ key: String) -> String { NSLocalizedString(key, comment: "") }
 // All DDC traffic is serialized off the UI thread. A process timeout also covers
 // an unresponsive monitor after sleep or a cable disconnect.
 enum DDC {
+    static func read(_ control: String, display: String) throws -> (value: Int, maximum: Int) {
+        guard let value = Int(try run(["display", display, "get", control])),
+              let maximum = Int(try run(["display", display, "max", control])),
+              maximum > 0, value >= 0, value <= maximum else {
+            throw NSError(domain: "Invalid DDC value", code: 1)
+        }
+        return (value, maximum)
+    }
+
     static func run(_ args: [String]) throws -> String {
         let p = Process()
         p.executableURL = Bundle.main.resourceURL!.appendingPathComponent("m1ddc")
@@ -45,6 +54,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var item: NSStatusItem!
     let menu = NSMenu()
     let slider = NSSlider(value: 0, minValue: 0, maxValue: 100, target: nil, action: nil)
+    let volumeLabel = NSTextField(labelWithString: L("Громкость"))
+    let brightnessSlider = NSSlider(value: 0, minValue: 0, maxValue: 100, target: nil, action: nil)
+    let brightnessLabel = NSTextField(labelWithString: L("Яркость дисплея"))
+    let brightnessNote = NSTextField(wrappingLabelWithString: "")
     let title = NSTextField(labelWithString: "LG ULTRAGEAR+")
     let detail = NSTextField(wrappingLabelWithString: L("Ищу монитор…"))
     var permissionItem: NSMenuItem!
@@ -57,6 +70,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var beforeMute = 50
     var generation = 0
     var pending: DispatchWorkItem?
+    var brightness: Int?
+    var brightnessMaximum = 100
+    var brightnessGeneration = 0
+    var brightnessPending: DispatchWorkItem?
+    var brightnessError = ""
     var busy = false
     var timer: Timer?
     var outputTimer: Timer?
@@ -67,6 +85,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var controlWindow: NSWindow?
     var windowSlider: NSSlider?
     var windowDetail: NSTextField?
+    var windowVolumeLabel: NSTextField?
+    var windowBrightnessSlider: NSSlider?
+    var windowBrightnessLabel: NSTextField?
+    var windowBrightnessNote: NSTextField?
 
     var diagnosticsURL: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -77,6 +99,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let info: [String: Any] = ["pid": ProcessInfo.processInfo.processIdentifier,
             "accessibility": AXIsProcessTrusted(), "tap": keyStatus,
             "output": outputName(), "monitor": uuid ?? "Нет связи", "volume": volume,
+            "brightness": brightness ?? -1, "brightnessMaximum": brightnessMaximum,
+            "brightnessError": brightnessError,
             "lastMediaEvent": lastMediaEvent,
             "menuIconVisible": item?.isVisible ?? false,
             "menuIconFrame": item?.button?.window.map { NSStringFromRect($0.frame) } ?? ""]
@@ -97,19 +121,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         item.button?.image = NSImage(systemSymbolName: "speaker.wave.2", accessibilityDescription: "LG Sound")
         item.button?.imagePosition = .imageLeading
         item.menu = menu
-        let view = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 105))
-        title.frame = NSRect(x: 18, y: 77, width: 264, height: 20)
-        slider.frame = NSRect(x: 18, y: 46, width: 264, height: 24)
-        detail.frame = NSRect(x: 18, y: 3, width: 264, height: 38)
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: 220))
+        title.frame = NSRect(x: 18, y: 190, width: 284, height: 20)
+        volumeLabel.frame = NSRect(x: 18, y: 165, width: 284, height: 18)
+        slider.frame = NSRect(x: 18, y: 139, width: 284, height: 24)
+        slider.setAccessibilityLabel(L("Громкость"))
+        brightnessLabel.frame = NSRect(x: 18, y: 111, width: 284, height: 18)
+        brightnessSlider.frame = NSRect(x: 18, y: 85, width: 284, height: 24)
+        brightnessSlider.setAccessibilityLabel(L("Яркость дисплея"))
+        brightnessSlider.isEnabled = false
+        brightnessSlider.target = self
+        brightnessSlider.action = #selector(brightnessSliderChanged)
+        brightnessNote.frame = NSRect(x: 18, y: 53, width: 284, height: 28)
+        brightnessNote.font = .systemFont(ofSize: 11)
+        brightnessNote.textColor = .secondaryLabelColor
+        detail.frame = NSRect(x: 18, y: 5, width: 284, height: 38)
         detail.font = .systemFont(ofSize: 11)
         detail.textColor = .secondaryLabelColor
         slider.isEnabled = false
         slider.target = self
         slider.action = #selector(sliderChanged)
-        [title, slider, detail].forEach { view.addSubview($0) }
+        [title, volumeLabel, slider, brightnessLabel, brightnessSlider, brightnessNote, detail].forEach { view.addSubview($0) }
         let controls = NSMenuItem(); controls.view = view; menu.addItem(controls)
         add("Выключить / вернуть звук", #selector(mute))
-        add("Открыть окно громкости", #selector(showControls))
+        add("Открыть окно управления", #selector(showControls))
         add("Обновить подключение", #selector(refresh))
         menu.addItem(.separator())
         permissionItem = add("Разрешить клавиши громкости…", #selector(requestKeys))
@@ -142,7 +177,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc func showControls() {
         if controlWindow == nil {
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 380, height: 220),
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 380, height: 300),
                 styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
             window.title = "LG Sound"
             window.delegate = self
@@ -151,10 +186,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let content = window.contentView!
             let label = NSTextField(labelWithString: "LG ULTRAGEAR+")
             label.font = .boldSystemFont(ofSize: 18)
-            label.frame = NSRect(x: 24, y: 171, width: 330, height: 26)
+            label.frame = NSRect(x: 24, y: 252, width: 330, height: 26)
+            let volumeCaption = NSTextField(labelWithString: volumeLabel.stringValue)
+            volumeCaption.frame = NSRect(x: 24, y: 225, width: 330, height: 18)
             let volumeSlider = NSSlider(value: Double(volume), minValue: 0, maxValue: Double(maximum),
                 target: self, action: #selector(windowSliderChanged))
-            volumeSlider.frame = NSRect(x: 24, y: 126, width: 330, height: 28)
+            volumeSlider.frame = NSRect(x: 24, y: 198, width: 330, height: 26)
+            volumeSlider.setAccessibilityLabel(L("Громкость"))
+            let brightnessCaption = NSTextField(labelWithString: brightnessLabel.stringValue)
+            brightnessCaption.frame = NSRect(x: 24, y: 168, width: 330, height: 18)
+            let displaySlider = NSSlider(value: Double(brightness ?? 0), minValue: 0,
+                maxValue: Double(brightnessMaximum), target: self, action: #selector(windowBrightnessChanged))
+            displaySlider.frame = NSRect(x: 24, y: 141, width: 330, height: 26)
+            displaySlider.setAccessibilityLabel(L("Яркость дисплея"))
+            let displayNote = NSTextField(wrappingLabelWithString: brightnessError)
+            displayNote.frame = NSRect(x: 24, y: 109, width: 330, height: 28)
+            displayNote.font = .systemFont(ofSize: 11)
+            displayNote.textColor = .secondaryLabelColor
             let info = NSTextField(wrappingLabelWithString: detail.stringValue)
             info.frame = NSRect(x: 24, y: 67, width: 330, height: 48)
             info.font = .systemFont(ofSize: 12)
@@ -164,15 +212,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let muteButton = NSButton(title: L("Mute"), target: self, action: #selector(mute))
             muteButton.bezelStyle = .rounded
             muteButton.frame = NSRect(x: 260, y: 20, width: 96, height: 32)
-            [label, volumeSlider, info, keys, muteButton].forEach { content.addSubview($0) }
+            [label, volumeCaption, volumeSlider, brightnessCaption, displaySlider, displayNote, info, keys, muteButton].forEach { content.addSubview($0) }
             controlWindow = window
             windowSlider = volumeSlider
             windowDetail = info
+            windowVolumeLabel = volumeCaption
+            windowBrightnessSlider = displaySlider
+            windowBrightnessLabel = brightnessCaption
+            windowBrightnessNote = displayNote
         }
         windowSlider?.doubleValue = Double(volume)
         windowSlider?.maxValue = Double(maximum)
         windowSlider?.isEnabled = uuid != nil
         windowDetail?.stringValue = detail.stringValue
+        renderBrightness()
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         controlWindow?.makeKeyAndOrderFront(nil)
@@ -186,36 +239,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if let slider = windowSlider { setVolume(Int(slider.doubleValue.rounded())) }
     }
 
+    @objc func brightnessSliderChanged() { setBrightness(Int(brightnessSlider.doubleValue.rounded())) }
+    @objc func windowBrightnessChanged() {
+        if let slider = windowBrightnessSlider { setBrightness(Int(slider.doubleValue.rounded())) }
+    }
+
     @discardableResult func add(_ text: String, _ action: Selector) -> NSMenuItem {
         let entry = NSMenuItem(title: L(text), action: action, keyEquivalent: "")
         entry.target = self; menu.addItem(entry); return entry
     }
 
     @objc func refresh() {
-        guard !busy, pending == nil else { return }
+        guard !busy, pending == nil, brightnessPending == nil else { return }
         busy = true
         let revision = generation
+        let displayRevision = brightnessGeneration
         queue.async {
             do {
                 let list = try DDC.run(["display", "list"])
                 let line = list.components(separatedBy: .newlines).first { $0.contains("LG ULTRAGEAR+") }
                 guard let line, let start = line.lastIndex(of: "("), let end = line.lastIndex(of: ")") else { throw NSError(domain: "No LG", code: 1) }
                 let id = String(line[line.index(after: start)..<end])
-                guard let value = Int(try DDC.run(["display", id, "get", "volume"])),
-                      let max = Int(try DDC.run(["display", id, "max", "volume"])),
-                      max > 0, value >= 0, value <= max else { throw NSError(domain: "Invalid volume", code: 2) }
+                let audio = try DDC.read("volume", display: id)
+                // Unsupported or locked brightness must not disable volume control.
+                let display = try? DDC.read("luminance", display: id)
                 DispatchQueue.main.async {
                     self.busy = false
-                    guard revision == self.generation else { return }
-                    self.uuid = id; self.maximum = max; self.volume = value
-                    self.slider.maxValue = Double(max); self.slider.isEnabled = true
+                    guard revision == self.generation, displayRevision == self.brightnessGeneration else { return }
+                    self.uuid = id; self.maximum = audio.maximum; self.volume = audio.value
+                    self.slider.maxValue = Double(audio.maximum); self.slider.isEnabled = true
+                    self.brightness = display?.value
+                    self.brightnessMaximum = display?.maximum ?? 100
+                    self.brightnessError = display == nil ? L("Монитор не сообщает яркость по DDC/CI. Проверь режим HDR и настройки монитора.") : ""
                     self.render()
                 }
             } catch {
                 DispatchQueue.main.async {
                     self.busy = false
-                    guard revision == self.generation else { return }
+                    guard revision == self.generation, displayRevision == self.brightnessGeneration else { return }
                     self.uuid = nil; self.slider.isEnabled = false
+                    self.brightness = nil
+                    self.brightnessError = L("Нет связи с монитором.")
+                    self.renderBrightness()
                     self.item.button?.title = " ?"
                     self.detail.stringValue = L("LG не отвечает. Проверь кабель и DDC/CI в меню монитора.")
                     self.windowSlider?.isEnabled = false
@@ -229,11 +294,72 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let percent = Int((Double(volume) / Double(maximum) * 100).rounded())
         item.button?.title = " \(percent)%"
         slider.doubleValue = Double(volume)
+        volumeLabel.stringValue = String(format: L("Громкость: %d%%"), percent)
+        windowVolumeLabel?.stringValue = volumeLabel.stringValue
         detail.stringValue = String(format: L("Громкость LG: %d%%. Клавиши работают, когда звук выведен на LG."), percent)
         windowSlider?.maxValue = Double(maximum)
         windowSlider?.doubleValue = Double(volume)
         windowSlider?.isEnabled = uuid != nil
         windowDetail?.stringValue = detail.stringValue
+        renderBrightness()
+    }
+
+    func renderBrightness() {
+        let available = uuid != nil && brightness != nil
+        brightnessSlider.isEnabled = available
+        windowBrightnessSlider?.isEnabled = available
+        brightnessSlider.maxValue = Double(brightnessMaximum)
+        windowBrightnessSlider?.maxValue = Double(brightnessMaximum)
+        if let value = brightness {
+            let percent = Int((Double(value) / Double(brightnessMaximum) * 100).rounded())
+            brightnessLabel.stringValue = String(format: L("Яркость: %d%%"), percent)
+            brightnessSlider.doubleValue = Double(value)
+            windowBrightnessSlider?.doubleValue = Double(value)
+        } else {
+            brightnessLabel.stringValue = L("Яркость недоступна")
+        }
+        windowBrightnessLabel?.stringValue = brightnessLabel.stringValue
+        brightnessNote.stringValue = brightnessError
+        windowBrightnessNote?.stringValue = brightnessError
+    }
+
+    func setBrightness(_ value: Int) {
+        guard let id = uuid, brightness != nil else { return }
+        let desired = min(brightnessMaximum, max(0, value))
+        brightness = desired
+        brightnessError = ""
+        brightnessGeneration += 1
+        let revision = brightnessGeneration
+        renderBrightness()
+        brightnessPending?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, revision == self.brightnessGeneration else { return }
+            self.brightnessPending = nil
+            self.queue.async {
+                do {
+                    _ = try DDC.run(["display", id, "set", "luminance", String(desired)])
+                    let confirmed = try DDC.read("luminance", display: id)
+                    DispatchQueue.main.async {
+                        guard revision == self.brightnessGeneration else { return }
+                        self.brightness = confirmed.value
+                        self.brightnessMaximum = confirmed.maximum
+                        if confirmed.value != desired {
+                            self.brightnessError = L("Монитор ограничил яркость. Проверь HDR и режим изображения.")
+                        }
+                        self.renderBrightness()
+                    }
+                } catch {
+                    DispatchQueue.main.async {
+                        guard revision == self.brightnessGeneration else { return }
+                        self.brightness = nil
+                        self.brightnessError = L("Не удалось изменить яркость. Нажми «Обновить подключение».")
+                        self.renderBrightness()
+                    }
+                }
+            }
+        }
+        brightnessPending = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1, execute: work)
     }
 
     func setVolume(_ value: Int) {

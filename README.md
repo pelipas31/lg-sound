@@ -1,6 +1,6 @@
 <p align="center"><img src="Assets/AppIcon.png" width="150" alt="LG Sound app icon"></p>
 <h1 align="center">LG Sound</h1>
-<p align="center">Your monitor speakers. Your Mac’s volume controls.</p>
+<p align="center">Monitor volume and brightness. Under your control.</p>
 <p align="center">
   <a href="https://github.com/pelipas31/lg-sound/releases/latest">Download</a> ·
   <a href="README.ru.md">Русский</a> ·
@@ -12,14 +12,15 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-34c759" alt="MIT license"></a>
 </p>
 
-LG Sound is a small, free menu bar app that controls the hardware speaker volume of an LG ULTRAGEAR+ monitor over USB-C / DisplayPort. Use its slider, your keyboard’s media keys, or a volume knob that sends standard media commands.
+LG Sound is a small, free menu bar app that controls the hardware speaker volume and display brightness of an LG ULTRAGEAR+ monitor over USB-C / DisplayPort. Use the sliders for both controls, or standard media keys and a compatible keyboard knob for volume.
 
 It started with a simple annoyance: an LG monitor connected to an M3 Mac played audio, but macOS’s volume controls were unavailable. LG Sound sends volume commands directly to the monitor using [m1ddc](https://github.com/waydabber/m1ddc).
 
 ## Features
 
 - Menu bar volume slider and percentage.
-- A separate volume window: open LG Sound from Applications to access it even when the menu icon is hidden.
+- Hardware brightness slider in both the menu and controls window, with read-back of the monitor’s actual setting.
+- A separate controls window: open LG Sound from Applications to access it even when the menu icon is hidden.
 - Volume up/down and mute from standard media keys, including a tested Keychron knob.
 - Mute and restore the previous level from the menu.
 - Media keys control LG only while it is the default audio output; the slider always targets LG.
@@ -27,7 +28,7 @@ It started with a simple annoyance: an LG monitor connected to an M3 Mac played 
 - English and Russian interface, chosen by macOS language preferences.
 - Local operation, no account, analytics, or app network requests.
 
-The native macOS volume slider stays unavailable for the DisplayPort output. LG Sound provides its own slider and controls the monitor’s hardware volume. It does not install an audio driver or modify the audio stream.
+The native macOS sliders may remain unavailable for the external DisplayPort output. LG Sound provides its own sliders for hardware volume and brightness. It does not install an audio driver, modify the audio stream, or simulate brightness with a dark overlay. Brightness keys are not intercepted.
 
 ## Compatibility
 
@@ -36,25 +37,29 @@ The native macOS volume slider stays unavailable for the DisplayPort output. LG 
 | Mac | Apple Silicon; arm64 build only |
 | macOS | 13+ build target; older releases have not been hardware-tested |
 | Monitor | Currently targets the display/audio name `LG ULTRAGEAR+` |
-| Connection | USB-C / DisplayPort with working DDC/CI volume commands |
+| Connection | USB-C / DisplayPort with working DDC/CI volume commands; brightness also needs DDC/CI luminance support |
 | Tested setup | LG 52G930B / `LG ULTRAGEAR+`, M3 Pro, macOS 27, USB-C / DisplayPort, Keychron volume knob |
 
 Other LG models, HDMI, docks, Intel Macs, and nonstandard knob mappings are unverified. DDC/CI support varies by monitor and connection. When multiple matching monitors are connected, the first is selected. There is no monitor picker yet.
 
 ## Install
 
-1. Download `LG-Sound-1.0.1-arm64.zip` from [Releases](https://github.com/pelipas31/lg-sound/releases/latest) and unzip it.
+1. Download `LG-Sound-1.1.0-arm64.zip` from [Releases](https://github.com/pelipas31/lg-sound/releases/latest) and unzip it.
 2. Move **LG Sound.app** into **Applications** before opening it.
 3. This community build is **ad-hoc signed and not notarized**. If macOS blocks it, review the source or build it yourself. If you choose to trust the downloaded build, Apple documents the app-specific **Privacy & Security → Open Anyway** flow [here](https://support.apple.com/en-gb/102445).
 4. Select **LG ULTRAGEAR+** in **System Settings → Sound → Output**.
-5. Use the speaker icon in the menu bar. The slider does not need Accessibility access.
+5. Use the speaker icon in the menu bar. Neither the volume nor the brightness slider needs Accessibility access.
 6. For keys or a knob, choose **Enable volume keys…**, then enable **LG Sound** in **Privacy & Security → Accessibility**. Restart the app if macOS requests it.
 
-Downloads include `SHA256SUMS.txt`. Compare the archive’s SHA-256 hash with `shasum -a 256 LG-Sound-1.0.1-arm64.zip`.
+Downloads include `SHA256SUMS.txt`. Compare the archive’s SHA-256 hash with `shasum -a 256 LG-Sound-1.1.0-arm64.zip`.
+
+### Brightness is unavailable or limited
+
+Brightness uses the monitor’s hardware DDC/CI luminance control. If it cannot be read, the brightness slider is disabled while volume remains usable. If the monitor clamps a requested setting, the app shows the reported value and a message. HDR, automatic brightness, or picture presets may limit adjustments; check the monitor settings. Changes made with the monitor’s controls are read on the next poll, roughly every eight seconds.
 
 ### Menu icon is missing
 
-Open **LG Sound.app** from Applications: this opens the volume window and requests that the menu icon be shown again. On recent macOS versions, also check **System Settings → Menu Bar → Allow in the Menu Bar**. The app’s internal visibility flag can be true while macOS hides its icon.
+Open **LG Sound.app** from Applications: this opens the controls window and requests that the menu icon be shown again. On recent macOS versions, also check **System Settings → Menu Bar → Allow in the Menu Bar**. The app’s internal visibility flag can be true while macOS hides its icon.
 
 Version 1.0.1 uses the public bundle identifier `io.github.pelipas31.LGSound` and an explicitly named status item. On the development Mac, installing this build in `/Applications` restored an icon that remained hidden with the old installation. This is a tested recovery on one Mac, not a guarantee for every macOS menu bar issue.
 
@@ -90,7 +95,7 @@ The bundled m1ddc helper is compiled locally from the pinned source in `Vendor/m
 
 ## Privacy and permissions
 
-Accessibility access lets LG Sound intercept standard volume media commands. The app does not record typed text or audio. A local file at `~/Library/Application Support/LG Sound/status.json` contains the audio output name, display identifier, volume, permission/tap state, and last volume media event. It is not uploaded. Review device names and identifiers before sharing diagnostics.
+Accessibility access lets LG Sound intercept standard volume media commands. The app does not record typed text or audio. A local file at `~/Library/Application Support/LG Sound/status.json` contains the audio output name, display identifier, volume, brightness and its error state, permission/tap state, and last volume media event. It is not uploaded. Review device names and identifiers before sharing diagnostics.
 
 To uninstall, quit the app, disable its optional login item, remove it from Applications and Accessibility, and optionally delete its `LG Sound` folder inside `~/Library/Application Support`.
 
