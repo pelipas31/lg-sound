@@ -40,7 +40,7 @@ func outputName() -> String {
     return name?.takeRetainedValue() as String? ?? ""
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let queue = DispatchQueue(label: "LGSound.DDC")
     var item: NSStatusItem!
     let menu = NSMenu()
@@ -64,6 +64,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var keyStatus = "Не подключён"
     var lastMediaEvent = "Нет событий"
     var lastDiagnostics = ""
+    var controlWindow: NSWindow?
+    var windowSlider: NSSlider?
+    var windowDetail: NSTextField?
 
     var diagnosticsURL: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -74,7 +77,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let info: [String: Any] = ["pid": ProcessInfo.processInfo.processIdentifier,
             "accessibility": AXIsProcessTrusted(), "tap": keyStatus,
             "output": outputName(), "monitor": uuid ?? "Нет связи", "volume": volume,
-            "lastMediaEvent": lastMediaEvent]
+            "lastMediaEvent": lastMediaEvent,
+            "menuIconVisible": item?.isVisible ?? false,
+            "menuIconFrame": item?.button?.window.map { NSStringFromRect($0.frame) } ?? ""]
         guard let data = try? JSONSerialization.data(withJSONObject: info, options: [.prettyPrinted, .sortedKeys]),
               let text = String(data: data, encoding: .utf8), text != lastDiagnostics else { return }
         lastDiagnostics = text
@@ -87,6 +92,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let copies = NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier!)
         if copies.contains(where: { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }) { NSApp.terminate(nil); return }
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        item.autosaveName = "LGSound.Volume"
+        item.isVisible = true
         item.button?.image = NSImage(systemSymbolName: "speaker.wave.2", accessibilityDescription: "LG Sound")
         item.button?.imagePosition = .imageLeading
         item.menu = menu
@@ -102,6 +109,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         [title, slider, detail].forEach { view.addSubview($0) }
         let controls = NSMenuItem(); controls.view = view; menu.addItem(controls)
         add("Выключить / вернуть звук", #selector(mute))
+        add("Открыть окно громкости", #selector(showControls))
         add("Обновить подключение", #selector(refresh))
         menu.addItem(.separator())
         permissionItem = add("Разрешить клавиши громкости…", #selector(requestKeys))
@@ -120,6 +128,62 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.saveDiagnostics()
         }
         lgIsOutput = outputName() == "LG ULTRAGEAR+"
+        if !UserDefaults.standard.bool(forKey: "hasOpenedControls") {
+            UserDefaults.standard.set(true, forKey: "hasOpenedControls")
+            showControls()
+        }
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        item.isVisible = true
+        showControls()
+        return false
+    }
+
+    @objc func showControls() {
+        if controlWindow == nil {
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 380, height: 220),
+                styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
+            window.title = "LG Sound"
+            window.delegate = self
+            window.isReleasedWhenClosed = false
+            window.center()
+            let content = window.contentView!
+            let label = NSTextField(labelWithString: "LG ULTRAGEAR+")
+            label.font = .boldSystemFont(ofSize: 18)
+            label.frame = NSRect(x: 24, y: 171, width: 330, height: 26)
+            let volumeSlider = NSSlider(value: Double(volume), minValue: 0, maxValue: Double(maximum),
+                target: self, action: #selector(windowSliderChanged))
+            volumeSlider.frame = NSRect(x: 24, y: 126, width: 330, height: 28)
+            let info = NSTextField(wrappingLabelWithString: detail.stringValue)
+            info.frame = NSRect(x: 24, y: 67, width: 330, height: 48)
+            info.font = .systemFont(ofSize: 12)
+            let keys = NSButton(title: L("Разрешить клавиши громкости…"), target: self, action: #selector(requestKeys))
+            keys.bezelStyle = .rounded
+            keys.frame = NSRect(x: 18, y: 20, width: 232, height: 32)
+            let muteButton = NSButton(title: L("Mute"), target: self, action: #selector(mute))
+            muteButton.bezelStyle = .rounded
+            muteButton.frame = NSRect(x: 260, y: 20, width: 96, height: 32)
+            [label, volumeSlider, info, keys, muteButton].forEach { content.addSubview($0) }
+            controlWindow = window
+            windowSlider = volumeSlider
+            windowDetail = info
+        }
+        windowSlider?.doubleValue = Double(volume)
+        windowSlider?.maxValue = Double(maximum)
+        windowSlider?.isEnabled = uuid != nil
+        windowDetail?.stringValue = detail.stringValue
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+        controlWindow?.makeKeyAndOrderFront(nil)
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        NSApp.setActivationPolicy(.accessory)
+    }
+
+    @objc func windowSliderChanged() {
+        if let slider = windowSlider { setVolume(Int(slider.doubleValue.rounded())) }
     }
 
     @discardableResult func add(_ text: String, _ action: Selector) -> NSMenuItem {
@@ -154,6 +218,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     self.uuid = nil; self.slider.isEnabled = false
                     self.item.button?.title = " ?"
                     self.detail.stringValue = L("LG не отвечает. Проверь кабель и DDC/CI в меню монитора.")
+                    self.windowSlider?.isEnabled = false
+                    self.windowDetail?.stringValue = self.detail.stringValue
                 }
             }
         }
@@ -164,6 +230,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         item.button?.title = " \(percent)%"
         slider.doubleValue = Double(volume)
         detail.stringValue = String(format: L("Громкость LG: %d%%. Клавиши работают, когда звук выведен на LG."), percent)
+        windowSlider?.maxValue = Double(maximum)
+        windowSlider?.doubleValue = Double(volume)
+        windowSlider?.isEnabled = uuid != nil
+        windowDetail?.stringValue = detail.stringValue
     }
 
     func setVolume(_ value: Int) {

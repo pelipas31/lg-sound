@@ -19,6 +19,7 @@ It started with a simple annoyance: an LG monitor connected to an M3 Mac played 
 ## Features
 
 - Menu bar volume slider and percentage.
+- A separate volume window: open LG Sound from Applications to access it even when the menu icon is hidden.
 - Volume up/down and mute from standard media keys, including a tested Keychron knob.
 - Mute and restore the previous level from the menu.
 - Media keys control LG only while it is the default audio output; the slider always targets LG.
@@ -42,14 +43,22 @@ Other LG models, HDMI, docks, Intel Macs, and nonstandard knob mappings are unve
 
 ## Install
 
-1. Download `LG-Sound-1.0.0-arm64.zip` from [Releases](https://github.com/pelipas31/lg-sound/releases/latest) and unzip it.
+1. Download `LG-Sound-1.0.1-arm64.zip` from [Releases](https://github.com/pelipas31/lg-sound/releases/latest) and unzip it.
 2. Move **LG Sound.app** into **Applications** before opening it.
 3. This community build is **ad-hoc signed and not notarized**. If macOS blocks it, review the source or build it yourself. If you choose to trust the downloaded build, Apple documents the app-specific **Privacy & Security → Open Anyway** flow [here](https://support.apple.com/en-gb/102445).
 4. Select **LG ULTRAGEAR+** in **System Settings → Sound → Output**.
 5. Use the speaker icon in the menu bar. The slider does not need Accessibility access.
 6. For keys or a knob, choose **Enable volume keys…**, then enable **LG Sound** in **Privacy & Security → Accessibility**. Restart the app if macOS requests it.
 
-Downloads include `SHA256SUMS.txt`. Compare the archive’s SHA-256 hash with `shasum -a 256 LG-Sound-1.0.0-arm64.zip`.
+Downloads include `SHA256SUMS.txt`. Compare the archive’s SHA-256 hash with `shasum -a 256 LG-Sound-1.0.1-arm64.zip`.
+
+### Menu icon is missing
+
+Open **LG Sound.app** from Applications: this opens the volume window and requests that the menu icon be shown again. On recent macOS versions, also check **System Settings → Menu Bar → Allow in the Menu Bar**. The app’s internal visibility flag can be true while macOS hides its icon.
+
+Version 1.0.1 uses the public bundle identifier `io.github.pelipas31.LGSound` and an explicitly named status item. On the development Mac, installing this build in `/Applications` restored an icon that remained hidden with the old installation. This is a tested recovery on one Mac, not a guarantee for every macOS menu bar issue.
+
+When updating from 1.0.0, quit the old copy and replace it in Applications. Remove any old Accessibility entry and grant access to the new copy. Re-enable optional launch at login if needed. You can still use the window slider while Accessibility access is off.
 
 ### Keys or knob do nothing
 
