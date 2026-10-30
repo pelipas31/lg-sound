@@ -1,0 +1,24 @@
+name: Bug report / Ошибка
+description: Report a bug or compatibility issue / Сообщить об ошибке или совместимости
+body:
+  - type: textarea
+    id: hardware
+    attributes:
+      label: Hardware and connection / Устройства и подключение
+      description: Mac chip, macOS version, monitor, cable/dock, keyboard model.
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: What happened? / Что произошло?
+      description: Does the menu slider work? Do volume keys or the knob work? What did you expect?
+    validations:
+      required: true
+  - type: checkboxes
+    id: permissions
+    attributes:
+      label: Checks / Проверки
+      options:
+        - label: The LG monitor is selected as the macOS audio output.
+        - label: I removed and re-added the current LG Sound app in Accessibility after updating it.

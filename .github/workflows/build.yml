@@ -1,0 +1,30 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Build and package Apple Silicon app
+        run: ./scripts/package.sh
+      - name: Check bundle and signature
+        run: |
+          plutil -lint 'build/LG Sound.app/Contents/Info.plist'
+          plutil -lint Resources/en.lproj/Localizable.strings Resources/ru.lproj/Localizable.strings
+          codesign --verify --deep --strict 'build/LG Sound.app'
+          file 'build/LG Sound.app/Contents/MacOS/LG Sound'
+          lipo 'build/LG Sound.app/Contents/MacOS/LG Sound' -verify_arch arm64
+          lipo 'build/LG Sound.app/Contents/Resources/m1ddc' -verify_arch arm64
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: LG-Sound-arm64
+          path: dist/*

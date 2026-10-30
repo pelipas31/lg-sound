@@ -1,0 +1,13 @@
+"Ищу монитор…" = "Looking for your monitor…";
+"Выключить / вернуть звук" = "Mute / Unmute";
+"Обновить подключение" = "Reconnect monitor";
+"Разрешить клавиши громкости…" = "Enable volume keys…";
+"Запускать при входе" = "Launch at login";
+"Открыть настройки звука…" = "Open Sound Settings…";
+"Выйти из LG Sound" = "Quit LG Sound";
+"LG не отвечает. Проверь кабель и DDC/CI в меню монитора." = "LG is not responding. Check your cable and the monitor’s DDC/CI setting.";
+"Громкость LG: %d%%. Клавиши работают, когда звук выведен на LG." = "LG volume: %d%%. Volume keys work when LG is the audio output.";
+"Не удалось изменить звук. Нажми «Обновить подключение»." = "Could not change volume. Choose Reconnect monitor.";
+"Не удалось изменить автозапуск" = "Could not change login settings";
+"Перехват не подключён — разрешить…" = "Volume keys unavailable — grant access…";
+"Клавиши громкости подключены ✓" = "Volume keys enabled ✓";
