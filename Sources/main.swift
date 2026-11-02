@@ -36,18 +36,24 @@ enum DDC {
     }
 }
 
-func outputName() -> String {
+func accessibilityGranted() -> Bool {
+    AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: false] as CFDictionary)
+}
+
+func outputRoute() -> AudioRoute {
     var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDefaultOutputDevice,
         mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
     var device = AudioDeviceID(0)
     var size = UInt32(MemoryLayout.size(ofValue: device))
-    guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &device) == noErr else { return "" }
+    guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &device) == noErr else { return .unknown }
     address.mSelector = kAudioObjectPropertyName
     var name: Unmanaged<CFString>?
     size = UInt32(MemoryLayout.size(ofValue: name))
-    guard AudioObjectGetPropertyData(device, &address, 0, nil, &size, &name) == noErr else { return "" }
-    return name?.takeRetainedValue() as String? ?? ""
+    guard AudioObjectGetPropertyData(device, &address, 0, nil, &size, &name) == noErr else { return .unknown }
+    return AudioRoute(id: device, name: name?.takeRetainedValue() as String? ?? "")
 }
+
+func outputName() -> String { outputRoute().name }
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let queue = DispatchQueue(label: "LGSound.DDC")
@@ -62,8 +68,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let detail = NSTextField(wrappingLabelWithString: L("Ищу монитор…"))
     var permissionItem: NSMenuItem!
     var loginItem: NSMenuItem!
-    var tap: CFMachPort?
-    var tapSource: CFRunLoopSource?
+    var mediaKeys: MediaKeyRecovery!
+    var outputListener: AudioObjectPropertyListenerBlock?
+    var outputListenerStatus: OSStatus = noErr
+    var windowKeysButton: NSButton?
     var uuid: String?
     var volume = 0
     var maximum = 100
@@ -78,8 +86,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var busy = false
     var timer: Timer?
     var outputTimer: Timer?
-    var lgIsOutput = false
-    var keyStatus = "Не подключён"
     var lastMediaEvent = "Нет событий"
     var lastDiagnostics = ""
     var controlWindow: NSWindow?
@@ -97,8 +103,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func saveDiagnostics() {
         let info: [String: Any] = ["pid": ProcessInfo.processInfo.processIdentifier,
-            "accessibility": AXIsProcessTrusted(), "tap": keyStatus,
-            "output": outputName(), "monitor": uuid ?? "Нет связи", "volume": volume,
+            "accessibility": mediaKeys.state != .permissionRequired, "tap": mediaKeys.state.rawValue,
+            "tapEnabled": mediaKeys.tapEnabled, "tapConnections": mediaKeys.connectionCount,
+            "tapResumes": mediaKeys.resumeCount, "outputListenerStatus": outputListenerStatus,
+            "output": mediaKeys.route.name, "outputDeviceID": mediaKeys.route.id,
+            "monitor": uuid ?? "Нет связи", "volume": volume,
             "brightness": brightness ?? -1, "brightnessMaximum": brightnessMaximum,
             "brightnessError": brightnessError,
             "lastMediaEvent": lastMediaEvent,
@@ -153,16 +162,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         add("Открыть настройки звука…", #selector(soundSettings))
         menu.addItem(.separator())
         add("Выйти из LG Sound", #selector(quit))
-        NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(refresh), name: NSWorkspace.didWakeNotification, object: nil)
+        mediaKeys = MediaKeyRecovery(readRoute: outputRoute, isTrusted: accessibilityGranted, makeTap: { [weak self] in
+            QuartzMediaKeyTap(handleEvent: { [weak self] event in self?.handleVolumeEvent(event) ?? false })
+        })
+        NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(handleWake), name: NSWorkspace.didWakeNotification, object: nil)
+        let listener: AudioObjectPropertyListenerBlock = { [weak self] _, _ in self?.audioOutputChanged() }
+        var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+        outputListenerStatus = AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address, .main, listener)
+        if outputListenerStatus == noErr { outputListener = listener }
         refresh()
-        installTap()
+        checkMediaKeys()
         timer = Timer.scheduledTimer(withTimeInterval: 8, repeats: true) { [weak self] _ in self?.refresh() }
         outputTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
-            self?.lgIsOutput = outputName() == "LG ULTRAGEAR+"
-            if self?.tap == nil { self?.installTap() }
+            self?.checkMediaKeys()
             self?.saveDiagnostics()
         }
-        lgIsOutput = outputName() == "LG ULTRAGEAR+"
         if !UserDefaults.standard.bool(forKey: "hasOpenedControls") {
             UserDefaults.standard.set(true, forKey: "hasOpenedControls")
             showControls()
@@ -216,6 +231,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             controlWindow = window
             windowSlider = volumeSlider
             windowDetail = info
+            windowKeysButton = keys
             windowVolumeLabel = volumeCaption
             windowBrightnessSlider = displaySlider
             windowBrightnessLabel = brightnessCaption
@@ -224,7 +240,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         windowSlider?.doubleValue = Double(volume)
         windowSlider?.maxValue = Double(maximum)
         windowSlider?.isEnabled = uuid != nil
-        windowDetail?.stringValue = detail.stringValue
+        renderKeyStatus()
         renderBrightness()
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
@@ -296,11 +312,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         slider.doubleValue = Double(volume)
         volumeLabel.stringValue = String(format: L("Громкость: %d%%"), percent)
         windowVolumeLabel?.stringValue = volumeLabel.stringValue
-        detail.stringValue = String(format: L("Громкость LG: %d%%. Клавиши работают, когда звук выведен на LG."), percent)
         windowSlider?.maxValue = Double(maximum)
         windowSlider?.doubleValue = Double(volume)
         windowSlider?.isEnabled = uuid != nil
-        windowDetail?.stringValue = detail.stringValue
+        renderKeyStatus()
         renderBrightness()
     }
 
@@ -410,51 +425,63 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     @objc func requestKeys() {
-        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-        _ = AXIsProcessTrustedWithOptions(options)
-        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
-        installTap()
+        if !accessibilityGranted() {
+            let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+            _ = AXIsProcessTrustedWithOptions(options)
+            NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
+        }
+        checkMediaKeys(forceReconnect: true)
     }
 
-    func installTap() {
-        guard tap == nil else { return }
-        guard AXIsProcessTrusted() else {
-            keyStatus = "Нет разрешения «Универсальный доступ»"
-            permissionItem.title = L("Разрешить клавиши громкости…")
-            return
+    func checkMediaKeys(forceReconnect: Bool = false) {
+        if mediaKeys.check(forceReconnect: forceReconnect), mediaKeys.route.isMonitor { refresh() }
+        renderKeyStatus()
+    }
+
+    @objc func audioOutputChanged() { checkMediaKeys(forceReconnect: true) }
+    @objc func handleWake() { checkMediaKeys(forceReconnect: true); refresh() }
+
+    func renderKeyStatus() {
+        let button = mediaKeys.state == .permissionRequired ? L("Разрешить клавиши громкости…") : L("Переподключить клавиши")
+        permissionItem.title = button
+        permissionItem.isEnabled = true
+        windowKeysButton?.title = button
+        if mediaKeys.state == .permissionRequired {
+            detail.stringValue = L("Клавиши: нет доступа. Удали старую запись LG Sound из «Универсального доступа» и добавь приложение заново.")
+        } else if mediaKeys.state != .ready {
+            detail.stringValue = L("Клавиши: восстанавливаю подключение… Ползунки доступны.")
+        } else if uuid == nil {
+            detail.stringValue = L("LG не отвечает. Проверь кабель и DDC/CI в меню монитора.")
+        } else if mediaKeys.route.isMonitor {
+            detail.stringValue = L("Клавиши и крутилка подключены к LG.")
+        } else {
+            detail.stringValue = String(format: L("Выход: %@. Клавиши LG включатся при выборе монитора."), mediaKeys.route.name)
         }
-        let mask = CGEventMask(1) << NSEvent.EventType.systemDefined.rawValue
-        guard let port = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap,
-            eventsOfInterest: mask, callback: { _, type, event, context in
-                let app = Unmanaged<AppDelegate>.fromOpaque(context!).takeUnretainedValue()
-                if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-                    if let tap = app.tap { CGEvent.tapEnable(tap: tap, enable: true) }
-                    return Unmanaged.passUnretained(event)
-                }
-                guard let ns = NSEvent(cgEvent: event), ns.subtype.rawValue == 8 else { return Unmanaged.passUnretained(event) }
-                let key = (ns.data1 >> 16) & 0xffff
-                guard [0, 1, 7].contains(key) else { return Unmanaged.passUnretained(event) }
-                app.lastMediaEvent = "key=\(key), data=\(ns.data1), time=\(Date())"
-                guard outputName() == "LG ULTRAGEAR+", app.uuid != nil else { return Unmanaged.passUnretained(event) }
-                let down = ((ns.data1 >> 8) & 0xff) == 0xA
-                if down {
-                    let step = max(1, Int((Double(app.maximum) / 16).rounded()))
-                    if key == 7 { if (ns.data1 & 1) == 0 { app.mute() } }
-                    else { app.setVolume(app.volume + (key == 0 ? step : -step)) }
-                }
-                return nil
-            }, userInfo: Unmanaged.passUnretained(self).toOpaque()) else {
-                keyStatus = "macOS отказала в перехвате"
-                permissionItem.title = L("Перехват не подключён — разрешить…")
-                return
-            }
-        tap = port
-        keyStatus = "Подключён"
-        tapSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, port, 0)
-        CFRunLoopAddSource(CFRunLoopGetMain(), tapSource, .commonModes)
-        CGEvent.tapEnable(tap: port, enable: true)
-        permissionItem.title = L("Клавиши громкости подключены ✓")
-        permissionItem.isEnabled = false
+        windowDetail?.stringValue = detail.stringValue
+    }
+
+    func handleVolumeEvent(_ event: NSEvent) -> Bool {
+        guard event.subtype.rawValue == 8 else { return false }
+        let key = (event.data1 >> 16) & 0xffff
+        guard [0, 1, 7].contains(key) else { return false }
+        lastMediaEvent = "key=\(key), data=\(event.data1), time=\(Date())"
+        // Never call CoreAudio, DDC, or permission APIs from an event tap.
+        guard mediaKeys.canControlMonitor, uuid != nil else { return false }
+        if ((event.data1 >> 8) & 0xff) == 0xA {
+            let step = max(1, Int((Double(maximum) / 16).rounded()))
+            if key == 7 { if (event.data1 & 1) == 0 { mute() } }
+            else { setVolume(volume + (key == 0 ? step : -step)) }
+        }
+        return true
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        mediaKeys?.stop()
+        if let outputListener {
+            var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+                mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+            AudioObjectRemovePropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address, .main, outputListener)
+        }
     }
 }
 

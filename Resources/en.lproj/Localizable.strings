@@ -1,4 +1,9 @@
 "Ищу монитор…" = "Looking for your monitor…";
+"Переподключить клавиши" = "Reconnect volume keys";
+"Клавиши: нет доступа. Удали старую запись LG Sound из «Универсального доступа» и добавь приложение заново." = "Keys: access denied. Remove the old LG Sound entry from Accessibility and add the app again.";
+"Клавиши: восстанавливаю подключение… Ползунки доступны." = "Reconnecting volume keys… Sliders are available.";
+"Клавиши и крутилка подключены к LG." = "Volume keys and knob are connected to LG.";
+"Выход: %@. Клавиши LG включатся при выборе монитора." = "Output: %@. LG volume keys will resume when you select the monitor.";
 "Открыть окно управления" = "Open controls window";
 "Громкость" = "Volume";
 "Громкость: %d%%" = "Volume: %d%%";

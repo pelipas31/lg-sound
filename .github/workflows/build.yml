@@ -16,6 +16,8 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Build and package Apple Silicon app
         run: ./scripts/package.sh
+      - name: Test media-key recovery scenarios
+        run: ./scripts/test.sh
       - name: Check bundle and signature
         run: |
           plutil -lint 'build/LG Sound.app/Contents/Info.plist'

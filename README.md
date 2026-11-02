@@ -25,6 +25,8 @@ It started with a simple annoyance: an LG monitor connected to an M3 Mac played 
 - Mute and restore the previous level from the menu.
 - Media keys control LG only while it is the default audio output; the slider always targets LG.
 - Optional launch at login and automatic connection checks after wake/disconnect.
+- Automatic media-key reconnection on audio output changes, with a watchdog for disabled or invalid event taps.
+- Live media-key status and a manual Reconnect volume keys action.
 - English and Russian interface, chosen by macOS language preferences.
 - Local operation, no account, analytics, or app network requests.
 
@@ -44,14 +46,14 @@ Other LG models, HDMI, docks, Intel Macs, and nonstandard knob mappings are unve
 
 ## Install
 
-1. Download `LG-Sound-1.1.0-arm64.zip` from [Releases](https://github.com/pelipas31/lg-sound/releases/latest) and unzip it.
+1. Download `LG-Sound-1.1.1-arm64.zip` from [Releases](https://github.com/pelipas31/lg-sound/releases/latest) and unzip it.
 2. Move **LG Sound.app** into **Applications** before opening it.
-3. This community build is **ad-hoc signed and not notarized**. If macOS blocks it, review the source or build it yourself. If you choose to trust the downloaded build, Apple documents the app-specific **Privacy & Security → Open Anyway** flow [here](https://support.apple.com/en-gb/102445).
+3. Release downloads from 1.1.1 are **Developer ID signed, but not notarized**. GitHub Actions artifacts and source builds without a configured certificate are ad-hoc signed. If macOS blocks it, review the source or build it yourself. If you choose to trust the downloaded build, Apple documents the app-specific **Privacy & Security → Open Anyway** flow [here](https://support.apple.com/en-gb/102445).
 4. Select **LG ULTRAGEAR+** in **System Settings → Sound → Output**.
 5. Use the speaker icon in the menu bar. Neither the volume nor the brightness slider needs Accessibility access.
 6. For keys or a knob, choose **Enable volume keys…**, then enable **LG Sound** in **Privacy & Security → Accessibility**. Restart the app if macOS requests it.
 
-Downloads include `SHA256SUMS.txt`. Compare the archive’s SHA-256 hash with `shasum -a 256 LG-Sound-1.1.0-arm64.zip`.
+Downloads include `SHA256SUMS.txt`. Compare the archive’s SHA-256 hash with `shasum -a 256 LG-Sound-1.1.1-arm64.zip`.
 
 ### Brightness is unavailable or limited
 
@@ -67,9 +69,9 @@ When updating from 1.0.0, quit the old copy and replace it in Applications. Remo
 
 ### Keys or knob do nothing
 
-Check that the slider works and LG is the selected audio output. Then check Accessibility access.
+The controls window shows whether media keys are connected, waiting for the LG output, reconnecting, or denied Accessibility access. Check that LG is the selected audio output. If permission is present but keys stop responding, choose **Reconnect volume keys**. Output changes and wake automatically reconnect the tap; a health check runs every second.
 
-**After an update or rebuild, the Accessibility switch can appear on while the current app is denied.** Remove LG Sound from Accessibility with **−**, add the current app from Applications with **+**, enable it, and restart. Local ad-hoc signatures are tied to a specific build; [Apple explains code identity here](https://developer.apple.com/documentation/technotes/tn3127-inside-code-signing-requirements).
+**When migrating from an old ad-hoc build, the Accessibility switch can appear on while the current app is denied.** Remove LG Sound from Accessibility with **−**, add the current `/Applications/LG Sound.app` with **+**, and enable it. Version 1.1.1 uses a stable Developer ID identity for release downloads so subsequent updates with the same signer and bundle ID can retain the grant. Restart if macOS requests it. Source/CI builds with ad-hoc signatures still change identity with each rebuild; [Apple explains code identity here](https://developer.apple.com/documentation/technotes/tn3127-inside-code-signing-requirements).
 
 The knob must send standard volume up/down or mute commands. Custom VIA/QMK mappings may need adjustment. Other apps that intercept media keys can conflict.
 
@@ -89,13 +91,17 @@ cd lg-sound
 
 The result is `build/LG Sound.app`. Copy it to Applications yourself. Building does **not** replace an installed app. Homebrew, the full Xcode IDE, and a separate m1ddc installation are not required.
 
+Run the media-key recovery regression scenarios with `./scripts/test.sh`. They cover headphone/monitor switching, audio device ID replacement, wake, disabled/invalid taps, installation failures, and permission changes without modifying the machine’s audio output.
+
+To sign local builds with your own certificate, set `CODE_SIGN_IDENTITY` when running the build, or put its name/fingerprint in the ignored `.signing-identity` file. Without either setting, builds are ad-hoc signed. Signing with Developer ID uses Hardened Runtime and an Apple timestamp; notarization is a separate step.
+
 Create the release ZIP and checksum with `./scripts/package.sh`. Regenerate the macOS `.icns` file from the PNG with `./scripts/make-icon.sh`.
 
 The bundled m1ddc helper is compiled locally from the pinned source in `Vendor/m1ddc` and included with its MIT license. GitHub Actions builds and checks the app signature; physical keyboard/monitor tests require hardware.
 
 ## Privacy and permissions
 
-Accessibility access lets LG Sound intercept standard volume media commands. The app does not record typed text or audio. A local file at `~/Library/Application Support/LG Sound/status.json` contains the audio output name, display identifier, volume, brightness and its error state, permission/tap state, and last volume media event. It is not uploaded. Review device names and identifiers before sharing diagnostics.
+Accessibility access lets LG Sound intercept standard volume media commands. The app does not record typed text or audio. A local file at `~/Library/Application Support/LG Sound/status.json` contains the audio output name, display identifier, volume, brightness and its error state, permission/tap state, tap health/reconnection counters, audio device ID, output listener status, and last volume media event. It is not uploaded. Review device names and identifiers before sharing diagnostics.
 
 To uninstall, quit the app, disable its optional login item, remove it from Applications and Accessibility, and optionally delete its `LG Sound` folder inside `~/Library/Application Support`.
 
